@@ -1,101 +1,133 @@
-# Tally Prime EditLog Extractor & Intelligence Dashboard
+# Tally Prime EditLog Extractor
 
-A high-performance full-stack system engineered to parse, extract, index, and analyze proprietary Tally Prime EditLog 2.1 binary data files (`.900`) and visualize them in a dark-themed React dashboard.
-
----
-
-## 🚀 Key Features
-
-1. **High-Performance Streaming Binary Parser**:
-   - Parses large multi-gigabyte `.900` files (`Manager.900`, `LinkMgr.900`, `SumTran.900`, `AddlCmp.900`) without high memory usage using UTF-16LE chunk streaming.
-   - Identifies master ledgers, display names, account groups, PAN numbers, GSTINs, addresses, contact persons, and phone numbers.
-   - Extracts complete **EditLog 2.1 audit trails** (Created By, Altered By, Action Types, timestamps).
-   - Ingests **76,000+ transaction vouchers** and sequences across fiscal years.
-
-2. **Automated & Manual Data Ingestion**:
-   - **Direct Local Ingestion**: Instantly point to any local directory on disk without zipping.
-   - **Drag-and-Drop ZIP Upload**: Ingest and extract ZIP archives with real-time stage & percentage progress tracking.
-
-3. **Modern Interactive Dashboard (React + Vite)**:
-   - **Executive KPIs**: Total Ledgers, Vouchers, PAN coverage %, GST entities, and Active Operators.
-   - **Account Group Breakdown**: Visual distribution bars across Sundry Debtors, Creditors, Assets, etc.
-   - **Master Ledgers Directory**: Fast debounced search, group filters, column sorting, pagination, and one-click CSV export.
-   - **Expandable Audit Drawer**: Inspect entity details, location, contacts, and EditLog change history with raw binary snippets.
-   - **Voucher Timeline**: Fiscal-year indexed voucher sequences (`BMW/003461/17-18`).
-   - **Audit & Operator Activity**: Track user logins, sessions, and EditLog operators (`MANISH`, `HASNAIN`, etc.).
+A parser and web dashboard to extract ledgers, vouchers, and audit trails directly from Tally Prime EditLog binary folders (`.900` files) into SQLite.
 
 ---
 
-## 🏗️ Architecture
+## Why this exists
+
+Tally Prime (specifically EditLog releases) stores company data in proprietary binary files like `Manager.900`, `LinkMgr.900`, and `SumTran.900`. Usually, getting this data out requires:
+
+1. Keeping a licensed Tally instance running.
+2. Configuring ODBC or writing custom TDL export scripts.
+3. Dealing with slow XML/TCP exports.
+
+If you only have access to an offline company backup folder—which can easily be 5 GB to 10+ GB—extracting records without Tally is tricky. Dumping these files into memory will instantly crash Node.js with heap out-of-memory errors.
+
+This tool reverse-engineers the UTF-16LE string boundaries and streams the binary files in chunks, pulling out structured accounting records directly into a local SQLite database, with a React UI to search, filter, and inspect everything.
+
+---
+
+## What it extracts
+
+- **Ledger Masters** (`Manager.900`): Names, parent groups (Sundry Debtors, Creditors, Bank Accounts, etc.), PAN numbers, GSTINs, addresses, contacts, and phone numbers.
+- **Vouchers** (`LinkMgr.900`): Voucher numbers, fiscal-year sequences, and date references.
+- **Audit Trails & Operator History** (`SumTran.900`): EditLog change history, user names, action timestamps, and session logs.
+- **Company Metadata** (`AddlCmp.900`): Company name, financial year, and folder details.
+
+---
+
+## How it works
+
+1. **Streaming UTF-16LE Reader**: Reads `.900` binary files in 256KB chunks, aligning byte pairs to decode UTF-16LE strings across buffer boundaries without holding multi-gigabyte files in memory.
+2. **Entity Heuristics**: Identifies ledger boundaries, account group relationships, and Indian tax patterns (PAN regex `[A-Z]{5}[0-9]{4}[A-Z]`, GSTIN regex `[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]`).
+3. **SQLite Indexing**: Extracted records are batch-inserted into SQLite using `better-sqlite3` with indexed columns for search and filtering.
+4. **React Dashboard**: Provides a searchable ledger directory, group breakdown, audit drawer for entity history, and one-click CSV export.
+
+---
+
+## Project Structure
 
 ```
-d:\tally extractor\
+tally-extractor/
 ├── server/
 │   ├── src/
-│   │   ├── app.js               # Express application server
+│   │   ├── app.js               # Express server & static asset handler
 │   │   ├── db/
-│   │   │   ├── schema.sql       # SQLite tables and indexing
-│   │   │   └── database.js      # Better-SQLite3 interface & queries
+│   │   │   ├── schema.sql       # SQLite tables (companies, ledgers, vouchers, activity)
+│   │   │   └── database.js      # better-sqlite3 queries & transactions
 │   │   ├── parser/
-│   │   │   ├── binaryReader.js  # Low-level UTF-16LE streaming reader
-│   │   │   ├── ledgerParser.js  # Manager.900 ledger & tax extractor
-│   │   │   ├── voucherParser.js # LinkMgr.900 voucher parser
-│   │   │   ├── auditParser.js   # SumTran.900 user session parser
-│   │   │   ├── companyParser.js # AddlCmp.900 company info parser
-│   │   │   └── orchestrator.js  # Ingestion workflow coordinator
+│   │   │   ├── binaryReader.js  # Low-level chunked stream reader
+│   │   │   ├── ledgerParser.js  # Manager.900 parser (ledgers, PAN, GST)
+│   │   │   ├── voucherParser.js # LinkMgr.900 parser (voucher records)
+│   │   │   ├── auditParser.js   # SumTran.900 parser (EditLog trails)
+│   │   │   ├── companyParser.js # AddlCmp.900 parser (company info)
+│   │   │   └── orchestrator.js  # Ingestion pipeline & progress tracking
 │   │   └── routes/
-│   │       └── api.js           # REST endpoints
-│   └── data/
-│       └── tally.db             # Local SQLite database
+│   │       └── api.js           # REST API endpoints
+│   └── data/                    # Generated SQLite database (tally.db)
 ├── client/
 │   ├── src/
 │   │   ├── components/
-│   │   │   ├── Sidebar.jsx      # Navigation & company switcher
-│   │   │   ├── Header.jsx       # Header & quick actions
-│   │   │   ├── StatsCards.jsx   # Top-level KPI widgets
-│   │   │   ├── Overview.jsx     # Analytics & group breakdown
-│   │   │   ├── LedgerTable.jsx  # Searchable master ledger browser
-│   │   │   ├── VoucherTimeline.jsx # Voucher timeline table
-│   │   │   ├── ActivityLog.jsx  # Operator session tracking
-│   │   │   └── UploadZone.jsx   # Drag-and-drop & local ingestion
-│   │   ├── App.jsx              # Application router
-│   │   └── index.css            # Dark glassmorphism design system
+│   │   │   ├── Sidebar.jsx      # Navigation & company selector
+│   │   │   ├── Header.jsx       # Search & stats header
+│   │   │   ├── StatsCards.jsx   # Ledger & voucher summary cards
+│   │   │   ├── Overview.jsx     # Group distributions & metrics
+│   │   │   ├── LedgerTable.jsx  # Paginated master table + CSV export
+│   │   │   ├── VoucherTimeline.jsx # Voucher sequence browser
+│   │   │   ├── ActivityLog.jsx  # Operator action logs
+│   │   │   └── UploadZone.jsx   # Local path ingestion & ZIP dropzone
+│   │   ├── App.jsx
+│   │   └── index.css            # Dark theme styles
+│   └── vite.config.js
 └── README.md
 ```
 
 ---
 
-## ⚡ Getting Started
+## Quickstart
 
-### 1. Start the Backend API Server
+### Prerequisites
+- Node.js 18+ (tested on Node 20+)
+- npm
+
+### 1. Server Setup
 ```bash
 cd server
 npm install
 npm start
 ```
-The backend starts at `http://localhost:3001` and serves both the API and the production client build.
+The server runs on `http://localhost:3001`. SQLite database and schema are initialized automatically on first run in `server/data/tally.db`.
 
-### 2. Start the Frontend (Vite Dev Server)
+### 2. Frontend Setup
 ```bash
 cd client
 npm install
 npm run dev
 ```
-The frontend dev server runs at `http://localhost:5173` with instant Hot Module Replacement (HMR) and automatic API proxying.
+The Vite development server runs on `http://localhost:5173` and proxies API requests to port `3001`.
 
 ---
 
-## 📡 REST API Reference
+## Ingesting Data
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/companies` | List all parsed companies and datasets |
-| `GET` | `/api/companies/:id/stats` | KPI summary statistics, groups, PAN/GST coverage |
-| `GET` | `/api/companies/:id/ledgers` | Searchable, paginated master ledgers |
-| `GET` | `/api/companies/:id/vouchers`| Searchable, paginated voucher records |
-| `GET` | `/api/companies/:id/activity`| EditLog user session logs |
+You can feed Tally data into the extractor in two ways:
+
+1. **Local Folder Path (Recommended for large datasets)**:
+   In the web dashboard under **Upload / Ingest**, enter the absolute path to your Tally company folder (e.g., `D:\TallyData\10001` or wherever your `.900` files are located) and click **Ingest Local Folder**. This avoids copying multi-gigabyte files.
+2. **ZIP Archive Upload**:
+   Drop a `.zip` archive containing the company folder into the dashboard upload zone. The server unpacks it into a temporary directory, runs the extraction pipeline, and cleans up after ingestion.
+
+---
+
+## REST Endpoints
+
+| Method | Route | Description |
+|---|---|---|
+| `GET` | `/api/companies` | List all indexed companies |
+| `GET` | `/api/companies/:id/stats` | Summary counts, group breakdown, PAN/GST stats |
+| `GET` | `/api/companies/:id/ledgers` | Paginated ledgers with search (`?search=`) and group filter (`?group=`) |
+| `GET` | `/api/companies/:id/vouchers` | Paginated voucher list |
+| `GET` | `/api/companies/:id/activity` | EditLog session entries |
 | `GET` | `/api/companies/:id/export` | Download filtered ledgers as CSV |
-| `POST`| `/api/upload` | Upload `.zip` package with Tally data |
-| `POST`| `/api/parse-local` | Ingest local folder directory on server |
-| `GET` | `/api/progress/:trackingId` | Real-time parsing progress tracking |
-| `DELETE`| `/api/companies/:id` | Remove company data |
+| `POST` | `/api/parse-local` | Trigger ingestion from a local disk path (`{ folderPath }`) |
+| `POST` | `/api/upload` | Upload a ZIP archive of Tally data |
+| `GET` | `/api/progress/:trackingId` | Poll extraction progress percentage and current stage |
+| `DELETE`| `/api/companies/:id` | Delete an indexed company and its records |
+
+---
+
+## Notes & Caveats
+
+- **File Version Compatibility**: Tested against Tally Prime EditLog 2.1 data folders. Different Tally releases may introduce minor variations in internal binary delimiter tokens.
+- **Data Privacy**: Raw Tally company folders and SQLite database files (`*.db`) are ignored in `.gitignore` by default so proprietary financial records are not accidentally pushed to git.
